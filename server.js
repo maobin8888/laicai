@@ -59,6 +59,10 @@ const readFileContent = async (filePath, mimetype) => {
 // AI分析函数
 const analyzeWithAI = async (fileContent, fileName) => {
   try {
+    // 从环境变量获取API密钥，如果没有则使用默认值（用于测试）
+    const deepSeekApiKey = process.env.DEEPSEEK_API_KEY || 'sk-755f79d8842b467eb25f30a0d40ed5fd';
+    
+    console.log('开始调用DeepSeek API进行分析...');
     const response = await axios.post(
       'https://api.deepseek.com/v1/chat/completions',
       {
@@ -79,15 +83,25 @@ const analyzeWithAI = async (fileContent, fileName) => {
       {
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer sk-755f79d8842b467eb25f30a0d40ed5fd`
+          'Authorization': `Bearer ${deepSeekApiKey}`
         },
         timeout: 30000 // 30秒超时
       }
     );
+    console.log('DeepSeek API调用成功，获取到分析结果');
     return response.data.choices[0].message.content;
   } catch (error) {
-    console.error('AI分析失败:', error.message);
-    throw new Error('AI分析失败，请稍后重试');
+    console.error('AI分析失败:', error.response ? error.response.data : error.message);
+    // 返回更详细的错误信息，帮助诊断问题
+    if (error.response && error.response.status === 401) {
+      throw new Error('API密钥无效或已过期，请更新密钥');
+    } else if (error.response && error.response.status === 429) {
+      throw new Error('API请求频率过高，请稍后重试');
+    } else if (error.code === 'ECONNABORTED') {
+      throw new Error('API请求超时，请检查网络连接或文件大小');
+    } else {
+      throw new Error(`AI分析失败: ${error.message}，请稍后重试`);
+    }
   }
 };
 
@@ -398,21 +412,30 @@ const getStockInfo = async (stockCode) => {
 
 // 文件上传和分析路由
 app.post('/api/analyze', upload.single('file'), async (req, res) => {
+  // 确保临时文件在函数结束时被删除
+  let filePath = null;
+  
   try {
     if (!req.file) {
       return res.status(400).json({ error: '请上传文件' });
     }
 
-    const { path: filePath, mimetype, originalname } = req.file;
+    const { path: tempFilePath, mimetype, originalname } = req.file;
+    filePath = tempFilePath;
+    
+    console.log(`接收到文件: ${originalname}, 类型: ${mimetype}, 大小: ${req.file.size} 字节`);
     
     // 读取文件内容
+    console.log('开始读取文件内容...');
     const fileContent = await readFileContent(filePath, mimetype);
+    console.log(`文件内容读取完成，长度: ${fileContent.length} 字符`);
     
     // 使用AI分析
     const analysisResult = await analyzeWithAI(fileContent, originalname);
     
     // 删除临时文件
     fs.unlinkSync(filePath);
+    filePath = null; // 确保不会再次尝试删除
     
     // 解析AI返回的JSON数据，提取股票代码
     let parsedAnalysis;
@@ -432,10 +455,13 @@ app.post('/api/analyze', upload.single('file'), async (req, res) => {
       
       // 如果有股票代码，调用智兔API获取股票信息
       if (parsedAnalysis.stockCode) {
+        console.log(`尝试获取股票代码 ${parsedAnalysis.stockCode} 的信息...`);
         stockInfo = await getStockInfo(parsedAnalysis.stockCode);
+        console.log('股票信息获取成功');
       }
     } catch (parseError) {
       console.error('解析AI返回数据失败:', parseError);
+      console.error('原始AI返回数据:', analysisResult); // 记录原始返回数据以便调试
       parsedAnalysis = {
         metrics: [],
         analysis: analysisResult,
@@ -451,7 +477,27 @@ app.post('/api/analyze', upload.single('file'), async (req, res) => {
     });
   } catch (error) {
     console.error('分析失败:', error.message);
-    res.status(500).json({ error: error.message });
+    // 确保临时文件被删除
+    if (filePath && fs.existsSync(filePath)) {
+      try {
+        fs.unlinkSync(filePath);
+        console.log('临时文件已删除');
+      } catch (unlinkError) {
+        console.error('删除临时文件失败:', unlinkError);
+      }
+    }
+    // 根据错误类型返回适当的HTTP状态码
+    if (error.message.includes('API密钥')) {
+      res.status(401).json({ error: error.message });
+    } else if (error.message.includes('频率过高')) {
+      res.status(429).json({ error: error.message });
+    } else if (error.message.includes('超时')) {
+      res.status(408).json({ error: error.message });
+    } else if (error.message.includes('文件类型')) {
+      res.status(400).json({ error: error.message });
+    } else {
+      res.status(500).json({ error: error.message });
+    }
   }
 });
 
@@ -463,6 +509,9 @@ app.post('/api/qa', async (req, res) => {
     if (!question || !reportContent) {
       return res.status(400).json({ error: '缺少必要参数' });
     }
+    
+    // 从环境变量获取API密钥，如果没有则使用默认值（用于测试）
+    const deepSeekApiKey = process.env.DEEPSEEK_API_KEY || 'sk-755f79d8842b467eb25f30a0d40ed5fd';
     
     // 调用DeepSeek API进行问答
     const response = await axios.post(
@@ -485,8 +534,9 @@ app.post('/api/qa', async (req, res) => {
       {
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer sk-755f79d8842b467eb25f30a0d40ed5fd`
-        }
+          'Authorization': `Bearer ${deepSeekApiKey}`
+        },
+        timeout: 30000 // 30秒超时
       }
     );
     
@@ -495,8 +545,17 @@ app.post('/api/qa', async (req, res) => {
       answer: response.data.choices[0].message.content
     });
   } catch (error) {
-    console.error('AI问答失败:', error.message);
-    res.status(500).json({ error: 'AI问答失败，请稍后重试' });
+    console.error('AI问答失败:', error.response ? error.response.data : error.message);
+    // 返回更详细的错误信息
+    if (error.response && error.response.status === 401) {
+      res.status(401).json({ error: 'API密钥无效或已过期，请更新密钥' });
+    } else if (error.response && error.response.status === 429) {
+      res.status(429).json({ error: 'API请求频率过高，请稍后重试' });
+    } else if (error.code === 'ECONNABORTED') {
+      res.status(408).json({ error: 'API请求超时，请检查网络连接' });
+    } else {
+      res.status(500).json({ error: `AI问答失败: ${error.message}，请稍后重试` });
+    }
   }
 });
 
