@@ -55,9 +55,6 @@
   "env": {
     "NODE_ENV": "production"
   },
-  "buildEnv": {
-    "NODE_ENV": "production"
-  },
   "settings": {
     "memory": 1024,
     "maxDuration": 60
