@@ -11,7 +11,6 @@
     }
   ],
   "routes": [
-    // 优先处理静态文件，启用缓存
     {
       "src": "/static/(.*)",
       "dest": "frontend/dist/static/$1",
@@ -26,7 +25,6 @@
         "Cache-Control": "public, max-age=31536000, immutable"
       }
     },
-    // API路由
     {
       "src": "/api/(.*)",
       "dest": "server.js",
@@ -34,12 +32,10 @@
         "Cache-Control": "no-store, max-age=0"
       }
     },
-    // 健康检查路由
     {
       "src": "/health",
       "dest": "server.js"
     },
-    // 主页路由
     {
       "src": "^/$",
       "dest": "frontend/dist/index.html",
@@ -47,7 +43,6 @@
         "Cache-Control": "public, max-age=0, must-revalidate"
       }
     },
-    // 其他所有路由通过前端处理
     {
       "src": "/(.*)",
       "dest": "frontend/dist/index.html",
