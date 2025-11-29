@@ -54,9 +54,5 @@
   "outputDirectory": "frontend/dist",
   "env": {
     "NODE_ENV": "production"
-  },
-  "settings": {
-    "memory": 1024,
-    "maxDuration": 60
   }
 }
